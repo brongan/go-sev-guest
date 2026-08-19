@@ -386,9 +386,9 @@ func (b *AmdSignerBuilder) certifyAsvk() error {
 	return err
 }
 
-// CustomExtensions returns an array of extensions following the KDS specification
+// CustomExtensionsV0 returns an array of StructVersion 0 extensions following the KDS specification
 // for the given values.
-func CustomExtensions(tcb kds.TCBParts, hwid []byte, cspid, productName string) []pkix.Extension {
+func CustomExtensionsV0(tcb kds.TCBVersionV0, hwid []byte, cspid, productName string) []pkix.Extension {
 	var productNameAsn1 []byte
 	asn1Zero, _ := asn1.Marshal(0)
 	if hwid != nil {
@@ -398,14 +398,14 @@ func CustomExtensions(tcb kds.TCBParts, hwid []byte, cspid, productName string) 
 		// VLEK doesn't have a -stepping component to its productName.
 		productNameAsn1, _ = asn1.MarshalWithParams(parts[0], "ia5")
 	}
-	blSpl, _ := asn1.Marshal(int(tcb.BlSpl))
-	teeSpl, _ := asn1.Marshal(int(tcb.TeeSpl))
-	snpSpl, _ := asn1.Marshal(int(tcb.SnpSpl))
-	spl4, _ := asn1.Marshal(int(tcb.Spl4))
-	spl5, _ := asn1.Marshal(int(tcb.Spl5))
-	spl6, _ := asn1.Marshal(int(tcb.Spl6))
-	spl7, _ := asn1.Marshal(int(tcb.Spl7))
-	ucodeSpl, _ := asn1.Marshal(int(tcb.UcodeSpl))
+	blSpl, _ := asn1.Marshal(int(tcb.BlSpl()))
+	teeSpl, _ := asn1.Marshal(int(tcb.TeeSpl()))
+	snpSpl, _ := asn1.Marshal(int(tcb.SnpSpl()))
+	spl4, _ := asn1.Marshal(int(tcb.Spl4()))
+	spl5, _ := asn1.Marshal(int(tcb.Spl5()))
+	spl6, _ := asn1.Marshal(int(tcb.Spl6()))
+	spl7, _ := asn1.Marshal(int(tcb.Spl7()))
+	ucodeSpl, _ := asn1.Marshal(int(tcb.UcodeSpl()))
 	exts := []pkix.Extension{
 		{Id: kds.OidStructVersion, Value: asn1Zero},
 		{Id: kds.OidProductName1, Value: productNameAsn1},
@@ -447,7 +447,7 @@ func (b *AmdSignerBuilder) endorsementKeyPrecert(creationTime time.Time, hwid []
 		SerialNumber:       serialNumber,
 		NotBefore:          time.Time{},
 		NotAfter:           creationTime.Add(vcekExpirationYears * 365 * 24 * time.Hour),
-		ExtraExtensions:    CustomExtensions(kds.TCBParts{}, hwid, b.CSPID, b.productName()),
+		ExtraExtensions:    CustomExtensionsV0(kds.TCBVersionV0(0), hwid, b.CSPID, b.productName()),
 	}
 }
 

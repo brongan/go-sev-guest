@@ -187,7 +187,7 @@ func (f *FakeKDS) Get(url string) ([]byte, error) {
 	if certs == nil {
 		return nil, fmt.Errorf("no certificate found at %q (unknown HWID %v)", url, vcek.HWID)
 	}
-	certbytes, ok := certs[vcek.TCB]
+	certbytes, ok := certs[uint64(vcek.TCB)]
 	if !ok {
 		return nil, fmt.Errorf("no certificate found at %q (host present, bad TCB %v)", url, vcek.TCB)
 	}

@@ -63,9 +63,9 @@ type Options struct {
 	MinimumVersion uint16
 	// MinimumTCB is the component-wise minimum TCB reported in the attestation report. This
 	// does not include the LaunchTCB.
-	MinimumTCB kds.TCBParts
+	MinimumTCB kds.TCBVersionV0
 	// MinimumLaunchTCB is the component-wise minimum for the attestation report LaunchTCB.
-	MinimumLaunchTCB kds.TCBParts
+	MinimumLaunchTCB kds.TCBVersionV0
 	// PermitProvisionalFirmware if true, allows the committed TCB, build, and API values to be less
 	// than or equal to the current values. If false, committed and current values must be equal.
 	PermitProvisionalFirmware bool
@@ -247,8 +247,8 @@ func PolicyToOptions(policy *cpb.Policy) (*Options, error) {
 		HostData:                  policy.GetHostData(),
 		ReportData:                policy.GetReportData(),
 		PlatformInfo:              platformInfo,
-		MinimumTCB:                kds.DecomposeTCBVersion(kds.TCBVersion(policy.GetMinimumTcb())),
-		MinimumLaunchTCB:          kds.DecomposeTCBVersion(kds.TCBVersion(policy.GetMinimumLaunchTcb())),
+		MinimumTCB:                kds.TCBVersionV0(policy.GetMinimumTcb()),
+		MinimumLaunchTCB:          kds.TCBVersionV0(policy.GetMinimumLaunchTcb()),
 		MinimumBuild:              uint8(policy.GetMinimumBuild()),
 		MinimumVersion:            minVersion,
 		RequireAuthorKey:          policy.GetRequireAuthorKey(),
@@ -348,8 +348,8 @@ func validateVerbatimFields(report *spb.Report, options *Options) error {
 // partDescription combines a TCB decomposition with a short description. It enables concise
 // comparisons with high quality error messages.
 type partDescription struct {
-	parts kds.TCBParts
-	desc  string
+	tcb  kds.TCBVersionV0
+	desc string
 }
 
 // reportTcbDescriptions is a collection of all TCB kinds that are within or about a report itself.
@@ -373,24 +373,24 @@ type reportTcbDescriptions struct {
 func getReportTcbs(report *spb.Report, certTcb kds.TCBVersion) *reportTcbDescriptions {
 	return &reportTcbDescriptions{
 		reported: partDescription{
-			parts: kds.DecomposeTCBVersion(kds.TCBVersion(report.GetReportedTcb())),
-			desc:  "report's REPORTED_TCB",
+			tcb:  kds.TCBVersionV0(report.GetReportedTcb()),
+			desc: "report's REPORTED_TCB",
 		},
 		current: partDescription{
-			parts: kds.DecomposeTCBVersion(kds.TCBVersion(report.GetCurrentTcb())),
-			desc:  "report's CURRENT_TCB",
+			tcb:  kds.TCBVersionV0(report.GetCurrentTcb()),
+			desc: "report's CURRENT_TCB",
 		},
 		committed: partDescription{
-			parts: kds.DecomposeTCBVersion(kds.TCBVersion(report.GetCommittedTcb())),
-			desc:  "report's COMMITTED_TCB",
+			tcb:  kds.TCBVersionV0(report.GetCommittedTcb()),
+			desc: "report's COMMITTED_TCB",
 		},
 		launch: partDescription{
-			parts: kds.DecomposeTCBVersion(kds.TCBVersion(report.GetLaunchTcb())),
-			desc:  "report's LAUNCH_TCB",
+			tcb:  kds.TCBVersionV0(report.GetLaunchTcb()),
+			desc: "report's LAUNCH_TCB",
 		},
 		cert: partDescription{
-			parts: kds.DecomposeTCBVersion(certTcb),
-			desc:  "TCB of the V[CL]EK certificate",
+			tcb:  kds.TCBVersionV0(certTcb),
+			desc: "TCB of the V[CL]EK certificate",
 		},
 	}
 }
@@ -406,34 +406,49 @@ type policyTcbDescriptions struct {
 func getPolicyTcbs(options *Options) *policyTcbDescriptions {
 	return &policyTcbDescriptions{
 		minimum: partDescription{
-			parts: options.MinimumTCB,
-			desc:  "policy minimum TCB",
+			tcb:  options.MinimumTCB,
+			desc: "policy minimum TCB",
 		},
 		minLaunch: partDescription{
-			parts: options.MinimumLaunchTCB,
-			desc:  "policy minimum launch TCB",
+			tcb:  options.MinimumLaunchTCB,
+			desc: "policy minimum launch TCB",
 		},
 	}
 }
 
 // tcbNeError return an error if the two TCBs are not equal
 func tcbNeError(left, right partDescription) error {
-	ltcb, _ := kds.ComposeTCBParts(left.parts)
-	rtcb, _ := kds.ComposeTCBParts(right.parts)
-	if ltcb == rtcb {
+	if left.tcb == right.tcb {
 		return nil
 	}
-	return fmt.Errorf("the %s 0x%x does not match the %s 0x%x", left.desc, ltcb, right.desc, rtcb)
+	return fmt.Errorf("the %s 0x%x does not match the %s 0x%x", left.desc, uint64(left.tcb), right.desc, uint64(right.tcb))
+}
+
+func formatTCBV0(t kds.TCBVersionV0) struct {
+	BlSpl, TeeSpl, Spl4, Spl5, Spl6, Spl7, SnpSpl, UcodeSpl uint8
+} {
+	return struct {
+		BlSpl, TeeSpl, Spl4, Spl5, Spl6, Spl7, SnpSpl, UcodeSpl uint8
+	}{
+		BlSpl:    t.BlSpl(),
+		TeeSpl:   t.TeeSpl(),
+		Spl4:     t.Spl4(),
+		Spl5:     t.Spl5(),
+		Spl6:     t.Spl6(),
+		Spl7:     t.Spl7(),
+		SnpSpl:   t.SnpSpl(),
+		UcodeSpl: t.UcodeSpl(),
+	}
 }
 
 // tcbGtError returns an error if wantLower is greater than (in part) wantHigher. It enforces
 // the property wantLower <= wantHigher.
 func tcbGtError(wantLower, wantHigher partDescription) error {
-	if kds.TCBPartsLE(wantLower.parts, wantHigher.parts) {
+	if wantLower.tcb.LE(wantHigher.tcb) {
 		return nil
 	}
 	return fmt.Errorf("the %s %+v is lower than the %s %+v in at least one component",
-		wantHigher.desc, wantHigher.parts, wantLower.desc, wantLower.parts)
+		wantHigher.desc, formatTCBV0(wantHigher.tcb), wantLower.desc, formatTCBV0(wantLower.tcb))
 }
 
 // validateTcb returns an error if the TCB values present in the report and V[CL]EK certificate do not
