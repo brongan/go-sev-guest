@@ -58,7 +58,12 @@ func TestValidateSnpAttestation(t *testing.T) {
 	reportID := []byte{0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	reportIDMA := []byte{0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	chipID := [64]byte{0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
-	goodtcb, _ := kds.ComposeTCBVersionV0(0x1f, 0x7f, 0, 0, 0, 0, 0x70, 0x92)
+	goodtcb := kds.TCBVersionV0{
+		BlSpl:    0x1f,
+		TeeSpl:   0x7f,
+		SnpSpl:   0x70,
+		UcodeSpl: 0x92,
+	}
 	type testOptions struct {
 		currentTcb     kds.TCBVersionV0
 		reportedTcb    kds.TCBVersionV0
@@ -73,10 +78,10 @@ func TestValidateSnpAttestation(t *testing.T) {
 		committedMinor uint8
 	}
 	makeReport := func(reportData [64]byte, opts testOptions) [labi.SnpReportRespReportSize]byte {
-		currentTcb := uint64(opts.currentTcb)
-		reportedTcb := uint64(opts.reportedTcb)
-		committedTcb := uint64(opts.committedTcb)
-		launchTcb := uint64(opts.launchTcb)
+		currentTcb := opts.currentTcb.Uint64()
+		reportedTcb := opts.reportedTcb.Uint64()
+		committedTcb := opts.committedTcb.Uint64()
+		launchTcb := opts.launchTcb.Uint64()
 		reportpb := &spb.Report{
 			Version:         snpReportVersion,
 			Policy:          debugPolicy,
@@ -214,9 +219,13 @@ func TestValidateSnpAttestation(t *testing.T) {
 			Input: noncecb1455,
 			Output: func() [labi.SnpReportRespReportSize]byte {
 				opts := baseOpts
-				tcb, _ := kds.ComposeTCBVersionV0(0, 0x7f, 0, 0, 0, 0, 0x70, 0x92)
-				opts.committedTcb = tcb
-				opts.launchTcb = tcb
+				opts.committedTcb = kds.TCBVersionV0{
+					BlSpl:    0,
+					TeeSpl:   0x7f,
+					SnpSpl:   0x70,
+					UcodeSpl: 0x92,
+				}
+				opts.launchTcb = opts.committedTcb
 				return makeReport(noncecb1455, opts)
 			}(),
 		},
@@ -238,7 +247,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 	getter := test.SimpleGetter(
 		map[string][]byte{
 			"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": rootBytes,
-			"https://kdsintf.amd.com/vcek/v1/Milan/0a0b0c0d0e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203040506?blSPL=31&teeSPL=127&snpSPL=112&ucodeSPL=146": sign.Vcek.Raw,
+			"https://kdsintf.amd.com/vcek/v1/Milan/0a0b0c0d0e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203040506?blSPL=31&snpSPL=112&teeSPL=127&ucodeSPL=146": sign.Vcek.Raw,
 		},
 	)
 	attestationFn := func(nonce [64]byte) *spb.Attestation {
@@ -303,7 +312,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				ReportIDMA:             reportIDMA,
 				MinimumBuild:           2,
 				MinimumVersion:         uint16((1 << 8) | 49),
-				MinimumTCB:             kds.TCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0x44) << 56)),
+				MinimumTCB:             kds.DecomposeTCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0x44) << 56)),
 				TrustedAuthorKeyHashes: [][]byte{authorKeyDigest},
 			},
 		},
@@ -314,7 +323,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				ReportData:   nonce12345[:],
 				GuestPolicy:  abi.SnpPolicy{Debug: true, SMT: true},
 				PlatformInfo: &abi.SnpPlatformInfo{SMTEnabled: true},
-				MinimumTCB:   kds.TCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0xff) << 56)),
+				MinimumTCB:   kds.DecomposeTCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0xff) << 56)),
 			},
 			wantErr: "the report's REPORTED_TCB {BlSpl:31 TeeSpl:127 Spl4:0 Spl5:0 Spl6:0 Spl7:0 SnpSpl:112 UcodeSpl:146} is lower than the policy minimum TCB {BlSpl:2 TeeSpl:0 Spl4:0 Spl5:0 Spl6:0 Spl7:0 SnpSpl:5 UcodeSpl:255} in at least one component",
 		},

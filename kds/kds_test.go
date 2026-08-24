@@ -40,8 +40,8 @@ func TestVCEKCertURL(t *testing.T) {
 	hwid := make([]byte, abi.ChipIDSize)
 	hwid[0] = 0xfe
 	hwid[abi.ChipIDSize-1] = 0xc0
-	got := VCEKCertURL("Milan", hwid, TCBVersionV0(0))
-	want := "https://kdsintf.amd.com/vcek/v1/Milan/fe0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0?blSPL=0&teeSPL=0&snpSPL=0&ucodeSPL=0"
+	got := VCEKCertURL("Milan", hwid, TCBVersionV0{})
+	want := "https://kdsintf.amd.com/vcek/v1/Milan/fe0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0?blSPL=0&snpSPL=0&teeSPL=0&ucodeSPL=0"
 	if got != want {
 		t.Errorf("VCEKCertURL(\"Milan\", %v, 0) = %q, want %q", hwid, got, want)
 	}
@@ -139,11 +139,11 @@ func TestParseVCEKCertURL(t *testing.T) {
 	}{
 		{
 			name: "happy path",
-			url:  VCEKCertURL("Milan", hwid, TCBVersionV0(0)),
+			url:  VCEKCertURL("Milan", hwid, TCBVersionV0{}),
 			want: func() VCEKCert {
 				c := VCEKCertProduct("Milan")
 				c.HWID = hwid
-				c.TCB = 0
+				c.TCB = TCBVersionV0{}
 				return c
 			}(),
 		},
@@ -160,12 +160,17 @@ func TestParseVCEKCertURL(t *testing.T) {
 		{
 			name:    "bad query argument numerical",
 			url:     fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Milan/%s?blSPL=-4", hwidhex),
-			wantErr: "invalid KDS TCB version URL argument value \"-4\", want a value 0-255",
+			wantErr: "invalid KDS TCB version URL argument value \"-4\", want a value 0-127",
 		},
 		{
 			name:    "bad query argument numerical",
 			url:     fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Milan/%s?blSPL=alpha", hwidhex),
-			wantErr: "invalid KDS TCB version URL argument value \"alpha\", want a value 0-255",
+			wantErr: "invalid KDS TCB version URL argument value \"alpha\", want a value 0-127",
+		},
+		{
+			name:    "query argument exceeds 127 for blSPL",
+			url:     fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Milan/%s?blSPL=128", hwidhex),
+			wantErr: "invalid KDS TCB version URL argument value \"128\", want a value 0-127",
 		},
 	}
 	for _, tc := range tcs {
@@ -318,65 +323,73 @@ func TestParseProductName(t *testing.T) {
 }
 
 func TestTCBVersionV0(t *testing.T) {
-	tcb, err := ComposeTCBVersionV0(1, 2, 3, 4, 5, 6, 7, 8)
+	tcb := TCBVersionV0{
+		BlSpl:    1,
+		TeeSpl:   2,
+		Spl4:     3,
+		Spl5:     4,
+		Spl6:     5,
+		Spl7:     6,
+		SnpSpl:   7,
+		UcodeSpl: 8,
+	}
+	if tcb.BlSpl != 1 || tcb.TeeSpl != 2 || tcb.Spl4 != 3 || tcb.Spl5 != 4 ||
+		tcb.Spl6 != 5 || tcb.Spl7 != 6 || tcb.SnpSpl != 7 || tcb.UcodeSpl != 8 {
+		t.Errorf("TCBVersionV0 fields failed: got bl=%d tee=%d spl4=%d spl5=%d spl6=%d spl7=%d snp=%d ucode=%d",
+			tcb.BlSpl, tcb.TeeSpl, tcb.Spl4, tcb.Spl5, tcb.Spl6, tcb.Spl7, tcb.SnpSpl, tcb.UcodeSpl)
+	}
+	if tcb.StructVersion() != 0 {
+		t.Errorf("StructVersion() = %d, want 0", tcb.StructVersion())
+	}
+
+	raw := tcb.Uint64()
+	decomposed := DecomposeTCBVersionV0(raw)
+	if decomposed != tcb {
+		t.Errorf("DecomposeTCBVersionV0(0x%x) = %+v, want %+v", raw, decomposed, tcb)
+	}
+
+	vals := tcb.Values()
+	parsed, err := ParseTCBVersionV0(vals)
 	if err != nil {
-		t.Fatalf("ComposeTCBVersionV0 failed: %v", err)
+		t.Fatalf("ParseTCBVersionV0(%v) failed: %v", vals, err)
 	}
-	if tcb.BlSpl() != 1 || tcb.TeeSpl() != 2 || tcb.Spl4() != 3 || tcb.Spl5() != 4 ||
-		tcb.Spl6() != 5 || tcb.Spl7() != 6 || tcb.SnpSpl() != 7 || tcb.UcodeSpl() != 8 {
-		t.Errorf("TCBVersionV0 accessors failed: got bl=%d tee=%d spl4=%d spl5=%d spl6=%d spl7=%d snp=%d ucode=%d",
-			tcb.BlSpl(), tcb.TeeSpl(), tcb.Spl4(), tcb.Spl5(), tcb.Spl6(), tcb.Spl7(), tcb.SnpSpl(), tcb.UcodeSpl())
-	}
-
-	// Range validation tests (0-127 for bl, tee, spl4-7, snp; 0-255 for ucode).
-	invalidCases := []struct {
-		name                                        string
-		bl, tee, spl4, spl5, spl6, spl7, snp, ucode uint8
-	}{
-		{"BlSpl > 127", 128, 0, 0, 0, 0, 0, 0, 0},
-		{"TeeSpl > 127", 0, 128, 0, 0, 0, 0, 0, 0},
-		{"Spl4 > 127", 0, 0, 128, 0, 0, 0, 0, 0},
-		{"Spl5 > 127", 0, 0, 0, 128, 0, 0, 0, 0},
-		{"Spl6 > 127", 0, 0, 0, 0, 128, 0, 0, 0},
-		{"Spl7 > 127", 0, 0, 0, 0, 0, 128, 0, 0},
-		{"SnpSpl > 127", 0, 0, 0, 0, 0, 0, 128, 0},
-	}
-	for _, tc := range invalidCases {
-		if _, err := ComposeTCBVersionV0(tc.bl, tc.tee, tc.spl4, tc.spl5, tc.spl6, tc.spl7, tc.snp, tc.ucode); err == nil {
-			t.Errorf("ComposeTCBVersionV0(%s) expected error, got nil", tc.name)
-		}
-	}
-
-	// UcodeSpl can be up to 255 without error.
-	if _, err := ComposeTCBVersionV0(127, 127, 127, 127, 127, 127, 127, 255); err != nil {
-		t.Errorf("ComposeTCBVersionV0 with ucode=255 returned unexpected error: %v", err)
+	if parsed != (TCBVersionV0{BlSpl: 1, TeeSpl: 2, SnpSpl: 7, UcodeSpl: 8}) {
+		t.Errorf("ParseTCBVersionV0(%v) = %+v, want %+v", vals, parsed, tcb)
 	}
 
 	// Component-wise LE tests across all 8 fields.
-	base, _ := ComposeTCBVersionV0(10, 10, 10, 10, 10, 10, 10, 10)
+	base := TCBVersionV0{
+		BlSpl:    10,
+		TeeSpl:   10,
+		Spl4:     10,
+		Spl5:     10,
+		Spl6:     10,
+		Spl7:     10,
+		SnpSpl:   10,
+		UcodeSpl: 10,
+	}
 	if !base.LE(base) {
 		t.Errorf("expected base.LE(base) to be true")
 	}
 
 	higherFields := []struct {
-		name                                        string
-		bl, tee, spl4, spl5, spl6, spl7, snp, ucode uint8
+		name string
+		tcb  TCBVersionV0
 	}{
-		{"BlSpl", 11, 10, 10, 10, 10, 10, 10, 10},
-		{"TeeSpl", 10, 11, 10, 10, 10, 10, 10, 10},
-		{"Spl4", 10, 10, 11, 10, 10, 10, 10, 10},
-		{"Spl5", 10, 10, 10, 11, 10, 10, 10, 10},
-		{"Spl6", 10, 10, 10, 10, 11, 10, 10, 10},
-		{"Spl7", 10, 10, 10, 10, 10, 11, 10, 10},
-		{"SnpSpl", 10, 10, 10, 10, 10, 10, 11, 10},
-		{"UcodeSpl", 10, 10, 10, 10, 10, 10, 10, 11},
+		{"BlSpl", TCBVersionV0{BlSpl: 11, TeeSpl: 10, Spl4: 10, Spl5: 10, Spl6: 10, Spl7: 10, SnpSpl: 10, UcodeSpl: 10}},
+		{"TeeSpl", TCBVersionV0{BlSpl: 10, TeeSpl: 11, Spl4: 10, Spl5: 10, Spl6: 10, Spl7: 10, SnpSpl: 10, UcodeSpl: 10}},
+		{"Spl4", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 11, Spl5: 10, Spl6: 10, Spl7: 10, SnpSpl: 10, UcodeSpl: 10}},
+		{"Spl5", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 10, Spl5: 11, Spl6: 10, Spl7: 10, SnpSpl: 10, UcodeSpl: 10}},
+		{"Spl6", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 10, Spl5: 10, Spl6: 11, Spl7: 10, SnpSpl: 10, UcodeSpl: 10}},
+		{"Spl7", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 10, Spl5: 10, Spl6: 10, Spl7: 11, SnpSpl: 10, UcodeSpl: 10}},
+		{"SnpSpl", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 10, Spl5: 10, Spl6: 10, Spl7: 10, SnpSpl: 11, UcodeSpl: 10}},
+		{"UcodeSpl", TCBVersionV0{BlSpl: 10, TeeSpl: 10, Spl4: 10, Spl5: 10, Spl6: 10, Spl7: 10, SnpSpl: 10, UcodeSpl: 11}},
 	}
 	for _, tc := range higherFields {
-		higher, _ := ComposeTCBVersionV0(tc.bl, tc.tee, tc.spl4, tc.spl5, tc.spl6, tc.spl7, tc.snp, tc.ucode)
-		if !base.LE(higher) {
+		if !base.LE(tc.tcb) {
 			t.Errorf("expected base.LE(higher for %s) to be true", tc.name)
 		}
-		if higher.LE(base) {
+		if tc.tcb.LE(base) {
 			t.Errorf("expected higher.LE(base for %s) to be false", tc.name)
 		}
 	}
