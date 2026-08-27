@@ -202,13 +202,21 @@ func kdsOidMap(cert *x509.Certificate) (map[kdsOID]*pkix.Extension, error) {
 
 // TCBVersionV0 represents the platform security patch levels for StructVersion 0 (Milan, Genoa, Siena).
 type TCBVersionV0 struct {
-	BlSpl    uint8
-	TeeSpl   uint8
-	Spl4     uint8
-	Spl5     uint8
-	Spl6     uint8
-	Spl7     uint8
-	SnpSpl   uint8
+	// BlSpl is the bootloader security patch level.
+	BlSpl uint8
+	// TeeSpl is the TEE security patch level.
+	TeeSpl uint8
+	// Spl4 is reserved.
+	Spl4 uint8
+	// Spl5 is reserved.
+	Spl5 uint8
+	// Spl6 is reserved.
+	Spl6 uint8
+	// Spl7 is reserved.
+	Spl7 uint8
+	// SnpSpl is the SNP security patch level.
+	SnpSpl uint8
+	// UcodeSpl is the microcode security patch level.
 	UcodeSpl uint8
 }
 
