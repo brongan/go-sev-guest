@@ -790,7 +790,7 @@ func TestRealAttestationVerification(t *testing.T) {
 		map[string][]byte{
 			"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": trust.AskArkMilanVcekBytes,
 			// Use the VCEK's hwID and known TCB values to specify the URL its VCEK cert would be fetched from.
-			"https://kdsintf.amd.com/vcek/v1/Milan/3ac3fe21e13fb0990eb28a802e3fb6a29483a6b0753590c951bdd3b8e53786184ca39e359669a2b76a1936776b564ea464cdce40c05f63c9b610c5068b006b5d?blSPL=2&teeSPL=0&snpSPL=5&ucodeSPL=68": testdata.VcekBytes,
+			"https://kdsintf.amd.com/vcek/v1/Milan/3ac3fe21e13fb0990eb28a802e3fb6a29483a6b0753590c951bdd3b8e53786184ca39e359669a2b76a1936776b564ea464cdce40c05f63c9b610c5068b006b5d?blSPL=2&snpSPL=5&teeSPL=0&ucodeSPL=68": testdata.VcekBytes,
 		},
 	)
 	tcs := []struct {
@@ -867,9 +867,9 @@ func TestV3KDSProduct(t *testing.T) {
 		t.Fatalf("no test cases")
 	}
 	getter := test.SimpleGetter(map[string][]byte{
-		"https://kdsintf.amd.com/vcek/v1/Milan/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&teeSPL=0&snpSPL=0&ucodeSPL=0": []byte("milancert"),
+		"https://kdsintf.amd.com/vcek/v1/Milan/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&snpSPL=0&teeSPL=0&ucodeSPL=0": []byte("milancert"),
 		"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": trust.AskArkMilanVcekBytes,
-		"https://kdsintf.amd.com/vcek/v1/Genoa/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&teeSPL=0&snpSPL=0&ucodeSPL=0": []byte("genoacert"),
+		"https://kdsintf.amd.com/vcek/v1/Genoa/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&snpSPL=0&teeSPL=0&ucodeSPL=0": []byte("genoacert"),
 		"https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain": trust.AskArkGenoaVcekBytes,
 	})
 	options := &Options{

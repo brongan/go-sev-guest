@@ -810,7 +810,7 @@ func fillInAttestation(ctx context.Context, attestation *spb.Attestation, option
 	switch info.SigningKey {
 	case abi.VcekReportSigner:
 		if len(chain.GetVcekCert()) == 0 {
-			vcekURL := kds.VCEKCertURL(productLine, report.GetChipId(), kds.TCBVersion(report.GetReportedTcb()))
+			vcekURL := kds.VCEKCertURL(productLine, report.GetChipId(), kds.DecomposeTCBVersionV0(report.GetReportedTcb()))
 			vcek, err := trust.GetWith(ctx, getter, vcekURL)
 			if err != nil {
 				return &trust.AttestationRecreationErr{
