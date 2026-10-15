@@ -31,8 +31,13 @@ import (
 	"github.com/google/go-sev-guest/kds"
 	test "github.com/google/go-sev-guest/testing"
 	"github.com/google/go-sev-guest/verify"
+	"github.com/google/go-sev-guest/verify/testdata"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	cpb "github.com/google/go-sev-guest/proto/check"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 )
 
@@ -615,4 +620,47 @@ func TestCheckMitigationVectors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzRawSnpAttestation decodes Options from a serialized check.Policy, as tools/check does.
+func FuzzRawSnpAttestation(f *testing.F) {
+	certTable := (&abi.CertTable{Entries: []abi.CertTableEntry{
+		{GUID: uuid.MustParse(abi.VcekGUID), RawCert: testdata.VcekBytes},
+	}}).Marshal()
+	report, err := abi.ReportToProto(testdata.AttestationBytes)
+	if err != nil {
+		f.Fatalf("ReportToProto(AttestationBytes) failed: %v", err)
+	}
+	matching, err := proto.Marshal(&cpb.Policy{
+		MinimumGuestSvn:  report.GetGuestSvn(),
+		Policy:           report.GetPolicy(),
+		FamilyId:         report.GetFamilyId(),
+		ImageId:          report.GetImageId(),
+		Vmpl:             wrapperspb.UInt32(report.GetVmpl()),
+		MinimumTcb:       report.GetCurrentTcb(),
+		MinimumLaunchTcb: report.GetLaunchTcb(),
+		ReportData:       report.GetReportData(),
+		Measurement:      report.GetMeasurement(),
+		HostData:         report.GetHostData(),
+		ReportId:         report.GetReportId(),
+		ReportIdMa:       report.GetReportIdMa(),
+		ChipId:           report.GetChipId(),
+	})
+	if err != nil {
+		f.Fatalf("proto.Marshal(matching policy) failed: %v", err)
+	}
+	f.Add(testdata.AttestationBytes, certTable, []byte{})
+	f.Add(testdata.AttestationBytes, certTable, matching)
+
+	f.Fuzz(func(_ *testing.T, rawReport, rawCertTable, rawPolicy []byte) {
+		policy := new(cpb.Policy)
+		if err := proto.Unmarshal(rawPolicy, policy); err != nil {
+			return
+		}
+		opts, err := PolicyToOptions(policy)
+		if err != nil {
+			return
+		}
+		_ = RawSnpAttestation(rawReport, rawCertTable, opts)
+	})
 }

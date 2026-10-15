@@ -47,6 +47,7 @@ import (
 	"github.com/google/go-sev-guest/verify/testdata"
 	"github.com/google/go-sev-guest/verify/trust"
 	"github.com/google/logger"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -1207,4 +1208,43 @@ func TestAttestationCertificateFetching(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzSnpAttestation seeds a real AMD-signed extended report, so signature paths need no harness signing.
+func FuzzSnpAttestation(f *testing.F) {
+	vcek, err := x509.ParseCertificate(testdata.VcekBytes)
+	if err != nil {
+		f.Fatalf("ParseCertificate(VcekBytes) failed: %v", err)
+	}
+	report, err := abi.ReportToProto(testdata.AttestationBytes)
+	if err != nil {
+		f.Fatalf("ReportToProto(AttestationBytes) failed: %v", err)
+	}
+	ask, ark, err := kds.ParseProductCertChain(trust.AskArkMilanVcekBytes)
+	if err != nil {
+		f.Fatalf("ParseProductCertChain(AskArkMilanVcekBytes) failed: %v", err)
+	}
+	// Serves only the seed's VCEK so that fetch paths run offline.
+	getter := test.SimpleGetter(map[string][]byte{
+		kds.VCEKCertURL("Milan", report.GetChipId(), kds.DecomposeTCBVersionV0(report.GetReportedTcb())): testdata.VcekBytes,
+	})
+	// Pins time inside the VCEK validity window so that results do not change as certificates expire.
+	now := vcek.NotBefore.Add(24 * time.Hour)
+	certTable := (&abi.CertTable{Entries: []abi.CertTableEntry{
+		{GUID: uuid.MustParse(abi.ArkGUID), RawCert: ark},
+		{GUID: uuid.MustParse(abi.AskGUID), RawCert: ask},
+		{GUID: uuid.MustParse(abi.VcekGUID), RawCert: testdata.VcekBytes},
+	}}).Marshal()
+	emptyTable := (&abi.CertTable{}).Marshal()
+	f.Add(append(append([]byte{}, testdata.AttestationBytes...), certTable...))
+	f.Add(append(append([]byte{}, testdata.AttestationBytes...), emptyTable...))
+
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		attestation, err := abi.ReportCertsToProto(data)
+		if err != nil {
+			return
+		}
+		// SnpAttestation writes the inferred product into Options, so each input gets fresh Options.
+		_ = SnpAttestation(attestation, &Options{Getter: getter, Now: now})
+	})
 }
