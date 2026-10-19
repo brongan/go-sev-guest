@@ -642,6 +642,10 @@ func updateProductExpectation(product **spb.SevProduct, reportProduct *spb.SevPr
 // SnpAttestation verifies the protobuf representation of an attestation report's signature based
 // on the report's SignatureAlgo, provided the certificate chain is valid.
 // Missing ASK and ARK certificates are not added to the attestation.
+//
+// SnpAttestation uses context.TODO(), so a caller's deadline cannot stop certificate fetches
+// from AMD KDS. Callers with a deadline should use SnpAttestationContext. Verifiers that require
+// the attester to supply the full certificate chain should set Options.DisableCertFetching.
 func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 	return SnpAttestationContext(context.TODO(), attestation, options)
 }

@@ -19,6 +19,10 @@ import (
 	"context"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -246,6 +250,142 @@ func TestGetWith(t *testing.T) {
 		}
 	})
 
+}
+
+// statusServer serves the given status codes in order, one per request, and then repeats the
+// last one. A 200 response has body "content". It returns the server and a request counter.
+func statusServer(t *testing.T, statuses ...int) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		i := int(calls.Add(1)) - 1
+		if i >= len(statuses) {
+			i = len(statuses) - 1
+		}
+		w.WriteHeader(statuses[i])
+		if statuses[i] == http.StatusOK {
+			w.Write([]byte("content"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func TestSimpleHTTPSGetterStatusError(t *testing.T) {
+	srv, _ := statusServer(t, http.StatusNotFound)
+	_, err := (&trust.SimpleHTTPSGetter{}).Get(srv.URL)
+	var statusErr *trust.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("Get() = %v, want *trust.HTTPStatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusNotFound || statusErr.URL != srv.URL {
+		t.Errorf("Get() error = %+v, want URL %q and status %d", statusErr, srv.URL, http.StatusNotFound)
+	}
+	if want := fmt.Sprintf("failed to retrieve '%s' status 404", srv.URL); err.Error() != want {
+		t.Errorf("Get() error text = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSimpleHTTPSGetterBodyLimit(t *testing.T) {
+	old := trust.MaxResponseBytes
+	trust.MaxResponseBytes = 16
+	t.Cleanup(func() { trust.MaxResponseBytes = old })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		size := 16
+		if r.URL.Path == "/large" {
+			size = 1 << 20
+		}
+		w.Write(bytes.Repeat([]byte{'a'}, size))
+	}))
+	t.Cleanup(srv.Close)
+
+	getter := &trust.SimpleHTTPSGetter{}
+	if body, err := getter.Get(srv.URL + "/limit"); err != nil || len(body) != 16 {
+		t.Errorf("Get(body at limit) = %d bytes, %v; want 16 bytes, nil", len(body), err)
+	}
+	if body, err := getter.Get(srv.URL + "/large"); err == nil {
+		t.Errorf("Get(body over limit) = %d bytes, nil; want error", len(body))
+	}
+}
+
+func TestRetryHTTPSGetterStatusPolicy(t *testing.T) {
+	tcs := []struct {
+		name       string
+		statuses   []int
+		timeout    time.Duration
+		wantErr    bool
+		wantStatus int
+		wantCalls  int32 // exact count; 0 means "more than one"
+	}{
+		{name: "404 is permanent", statuses: []int{http.StatusNotFound}, timeout: 5 * time.Second, wantErr: true, wantStatus: http.StatusNotFound, wantCalls: 1},
+		{name: "400 is permanent", statuses: []int{http.StatusBadRequest}, timeout: 5 * time.Second, wantErr: true, wantStatus: http.StatusBadRequest, wantCalls: 1},
+		{name: "429 then 200 retries", statuses: []int{http.StatusTooManyRequests, http.StatusOK}, timeout: 5 * time.Second, wantCalls: 2},
+		{name: "503 then 200 retries", statuses: []int{http.StatusServiceUnavailable, http.StatusOK}, timeout: 5 * time.Second, wantCalls: 2},
+		{name: "500 retries until timeout", statuses: []int{http.StatusInternalServerError}, timeout: 100 * time.Millisecond, wantErr: true, wantStatus: http.StatusInternalServerError},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, calls := statusServer(t, tc.statuses...)
+			r := &trust.RetryHTTPSGetter{
+				Timeout:       tc.timeout,
+				MaxRetryDelay: time.Millisecond,
+				Getter:        &trust.SimpleHTTPSGetter{},
+			}
+			start := time.Now()
+			body, err := r.Get(srv.URL)
+			elapsed := time.Since(start)
+
+			if !tc.wantErr {
+				if err != nil || string(body) != "content" {
+					t.Fatalf("Get() = %q, %v; want \"content\", nil", body, err)
+				}
+			} else {
+				var statusErr *trust.HTTPStatusError
+				if !errors.As(err, &statusErr) || statusErr.StatusCode != tc.wantStatus {
+					t.Fatalf("Get() = %v, want *trust.HTTPStatusError with status %d", err, tc.wantStatus)
+				}
+			}
+			got := calls.Load()
+			if tc.wantCalls != 0 && got != tc.wantCalls {
+				t.Errorf("server got %d requests, want %d", got, tc.wantCalls)
+			}
+			if tc.wantCalls == 0 && got < 2 {
+				t.Errorf("server got %d requests, want more than 1", got)
+			}
+			if tc.wantCalls == 1 && elapsed > time.Second {
+				t.Errorf("Get() took %v for a permanent error, want an immediate return", elapsed)
+			}
+		})
+	}
+}
+
+func TestRetryHTTPSGetterContextErrorNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	getter := contextErrGetter{calls: &calls}
+	r := &trust.RetryHTTPSGetter{
+		Timeout:       5 * time.Second,
+		MaxRetryDelay: time.Millisecond,
+		Getter:        getter,
+	}
+	_, err := r.Get("https://fetch.me")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Get() = %v, want context.Canceled", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("getter called %d times, want 1", got)
+	}
+}
+
+// contextErrGetter always fails with context.Canceled, as an inner getter does when its own
+// context is canceled.
+type contextErrGetter struct {
+	calls *atomic.Int32
+}
+
+func (g contextErrGetter) Get(_ string) ([]byte, error) {
+	g.calls.Add(1)
+	return nil, fmt.Errorf("request failed: %w", context.Canceled)
 }
 
 // Ensure that the HTTPSGetters implement the expected interfaces.
