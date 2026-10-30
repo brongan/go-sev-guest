@@ -732,9 +732,15 @@ func TestParseTCBVersionV1(t *testing.T) {
 			},
 		},
 		{
-			name:   "empty values default to zero",
-			values: url.Values{},
-			want:   TCBVersionV1{},
+			name: "min legal boundaries",
+			values: url.Values{
+				"fmcSPL":   []string{"0"},
+				"blSPL":    []string{"0"},
+				"teeSPL":   []string{"0"},
+				"snpSPL":   []string{"0"},
+				"ucodeSPL": []string{"0"},
+			},
+			want: TCBVersionV1{},
 		},
 	}
 	for _, tc := range tcs {
@@ -750,70 +756,103 @@ func TestParseTCBVersionV1(t *testing.T) {
 	}
 }
 
+// validTCBV1Values returns KDS query parameters that ParseTCBVersionV1 accepts.
+func validTCBV1Values() url.Values {
+	return TCBVersionV1{FmcSpl: 1, BlSpl: 2, TeeSpl: 3, SnpSpl: 4, UcodeSpl: 5}.Values()
+}
+
 func TestParseTCBVersionV1_Errors(t *testing.T) {
 	tcs := []struct {
 		name    string
-		values  url.Values
+		modify  func(url.Values)
 		wantErr string
 	}{
 		{
-			name: "fmcSPL exceeds 127",
-			values: url.Values{
-				"fmcSPL": []string{"128"},
-			},
+			name:    "fmcSPL exceeds 127",
+			modify:  func(v url.Values) { v.Set("fmcSPL", "128") },
 			wantErr: "want a value 0-127",
 		},
 		{
-			name: "ucodeSPL exceeds 255",
-			values: url.Values{
-				"ucodeSPL": []string{"256"},
-			},
+			name:    "ucodeSPL exceeds 255",
+			modify:  func(v url.Values) { v.Set("ucodeSPL", "256") },
 			wantErr: "want a value 0-255",
 		},
 		{
-			name: "negative value",
-			values: url.Values{
-				"blSPL": []string{"-1"},
-			},
+			name:    "negative value",
+			modify:  func(v url.Values) { v.Set("blSPL", "-1") },
 			wantErr: "want a value 0-127",
 		},
 		{
-			name: "non-numeric value",
-			values: url.Values{
-				"teeSPL": []string{"invalid"},
-			},
+			name:    "non-numeric value",
+			modify:  func(v url.Values) { v.Set("teeSPL", "invalid") },
 			wantErr: "want a value 0-127",
 		},
 		{
-			name: "unexpected argument",
-			values: url.Values{
-				"unknown": []string{"1"},
-			},
+			name:    "unexpected argument",
+			modify:  func(v url.Values) { v.Set("unknown", "1") },
 			wantErr: "unexpected KDS TCB version URL argument",
 		},
 		{
-			name: "duplicate parameter",
-			values: url.Values{
-				"fmcSPL": []string{"1", "2"},
-			},
+			name:    "duplicate parameter",
+			modify:  func(v url.Values) { v["fmcSPL"] = []string{"1", "2"} },
 			wantErr: "expected exactly one value",
 		},
 		{
-			name: "empty parameter value list",
-			values: url.Values{
-				"fmcSPL": []string{},
-			},
+			name:    "empty parameter value list",
+			modify:  func(v url.Values) { v["fmcSPL"] = []string{} },
 			wantErr: "expected exactly one value",
+		},
+		{
+			name:    "missing parameter",
+			modify:  func(v url.Values) { v.Del("snpSPL") },
+			wantErr: `missing KDS TCB version URL argument "snpSPL"`,
+		},
+		{
+			name: "V0 query without fmcSPL",
+			modify: func(v url.Values) {
+				for key := range v {
+					delete(v, key)
+				}
+				for key, vals := range (TCBVersionV0{BlSpl: 1, TeeSpl: 2, SnpSpl: 3, UcodeSpl: 4}).Values() {
+					v[key] = vals
+				}
+			},
+			wantErr: `missing KDS TCB version URL argument "fmcSPL"`,
+		},
+		{
+			name: "no parameters",
+			modify: func(v url.Values) {
+				for key := range v {
+					delete(v, key)
+				}
+			},
+			wantErr: "missing KDS TCB version URL argument",
 		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseTCBVersionV1(tc.values)
+			values := validTCBV1Values()
+			tc.modify(values)
+			got, err := ParseTCBVersionV1(values)
 			if err == nil {
-				t.Fatalf("ParseTCBVersionV1(%v) = %v, want error containing %q", tc.values, got, tc.wantErr)
+				t.Fatalf("ParseTCBVersionV1(%v) = %v, want error containing %q", values, got, tc.wantErr)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Errorf("ParseTCBVersionV1(%v) error = %v, want containing %q", tc.values, err, tc.wantErr)
+				t.Errorf("ParseTCBVersionV1(%v) error = %v, want containing %q", values, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseTCBVersionV0_MissingParameter(t *testing.T) {
+	for _, key := range []string{"blSPL", "teeSPL", "snpSPL", "ucodeSPL"} {
+		t.Run(key, func(t *testing.T) {
+			values := TCBVersionV0{BlSpl: 1, TeeSpl: 2, SnpSpl: 3, UcodeSpl: 4}.Values()
+			values.Del(key)
+			got, err := ParseTCBVersionV0(values)
+			want := fmt.Sprintf("missing KDS TCB version URL argument %q", key)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("ParseTCBVersionV0(%v) = %v, %v; want error containing %q", values, got, err, want)
 			}
 		})
 	}
